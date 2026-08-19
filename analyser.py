@@ -1,0 +1,319 @@
+"""
+Telegram Research Paper Analyser
+Listens for commands on Telegram, analyzes papers using Gemini,
+and appends summaries to a Google Doc via Google Apps Script.
+"""
+
+import os
+import asyncio
+import requests
+from datetime import datetime
+from dotenv import load_dotenv
+from telethon import TelegramClient, events
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
+from parsers import ParserFactory
+
+# Load configurations
+load_dotenv()
+
+# Telegram API credentials
+API_ID = os.getenv("API_ID")
+API_HASH = os.getenv("API_HASH")
+PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+
+# Gemini API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Google Apps Script Web App URL
+APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
+
+# Trigger Commands
+TRIGGERS = ["/analyze", "/analyse"]
+
+# Validate basic configuration
+if not API_ID or not API_HASH or not PHONE_NUMBER:
+    print("❌ Missing Telegram credentials in .env!")
+    exit(1)
+
+if not GEMINI_API_KEY:
+    print("⚠️  GEMINI_API_KEY is not set. Gemini features will fail unless set.")
+
+if not APPS_SCRIPT_URL:
+    print("⚠️  APPS_SCRIPT_URL is not set. Exporting to Google Docs will fail unless set.")
+
+# Initialize Clients
+client = TelegramClient('session', API_ID, API_HASH)
+
+# Initialize Gemini Client if key exists
+gemini_client = None
+if GEMINI_API_KEY:
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+# 1. Define the Pydantic schema for structured Gemini output
+class AnalysisResult(BaseModel):
+    title: str = Field(description="The formal title of the research paper (extracted or inferred).")
+    studentSummary: str = Field(
+        description="Summary for students. Explains the paper in plain English, defines key concepts/jargon, uses analogies, and highlights main learning outcomes. Use **bolding** for emphasis. 2-3 paragraphs."
+    )
+    facultySummary: str = Field(
+        description="Summary for PhD candidates or faculty pursuing PhD. Focuses on research methodology, gaps in literature, how it builds on existing work, and potential thesis/dissertation directions. Use **bolding**. 2-3 paragraphs."
+    )
+    phdSummary: str = Field(
+        description="Summary for PhD holders. Highly technical and academic. Critique the methodology, summarize core contributions, mathematical formulations or algorithmic architecture, and list limitations/novelty. Use **bolding**. 2-3 paragraphs."
+    )
+    productSummary: str = Field(
+        description="Summary as a product. Analyzes the research's commercial potential, target market, proposed MVP features, technical feasibility, and business model/monetization strategy. Use **bolding**. 2-3 paragraphs."
+    )
+
+
+def run_gemini_analysis(text: str) -> AnalysisResult:
+    """Synchronous helper to run Gemini analysis and return the parsed result."""
+    if not gemini_client:
+        raise ValueError("Gemini client is not initialized. Please set GEMINI_API_KEY in .env.")
+    
+    prompt = (
+        "You are an expert research assistant. Read and analyze the following research paper text. "
+        "Provide a comprehensive, high-quality analysis tailored to four distinct audiences: "
+        "1. Students (simplified explanations, analogies, key terms defined)\n"
+        "2. PhD-pursuing Faculty (methodology, research gaps, literature context, thesis extensions)\n"
+        "3. PhD Holders (deep technical critique, algorithmic/architectural novelties, mathematical rigorousness, limitations)\n"
+        "4. Product Managers/Entrepreneurs (business applicability, target market, commercialization viability, MVP features)\n\n"
+        f"Research Paper Text:\n{text}"
+    )
+
+    response = gemini_client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=(
+                "You are a world-class academic researcher and product strategist. "
+                "Your job is to analyze research texts and format summaries according to the requested schema. "
+                "Make sure each summary is detailed, highly informative, and specifically tailored to its target group. "
+                "Do not summarize in single sentences; write 2 to 3 rich paragraphs per section."
+            ),
+            response_mime_type="application/json",
+            response_schema=AnalysisResult,
+            temperature=0.2,
+        ),
+    )
+    
+    # Return the parsed Pydantic object
+    return response.parsed
+
+
+def post_to_google_doc(payload: dict) -> dict:
+    """Synchronous helper to post the analysis to the Google Apps Script Web App."""
+    if not APPS_SCRIPT_URL:
+        raise ValueError("Apps Script Web App URL is not configured. Please set APPS_SCRIPT_URL in .env.")
+        
+    response = requests.post(APPS_SCRIPT_URL, json=payload, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def check_if_research_paper(text: str) -> bool:
+    """Check if the text is a research paper or academic text using length and a fast LLM check."""
+    # Length heuristic: Research papers or abstracts are rarely shorter than 500 characters
+    if len(text) < 500:
+        return False
+        
+    if not gemini_client:
+        return False
+        
+    try:
+        prompt = (
+            "Analyze the following text. Is this a research paper, an academic abstract, or scientific manuscript content? "
+            "Reply with exactly one word: 'YES' or 'NO'. Do not include other text.\n\n"
+            f"Text:\n{text[:2000]}" # Check first 2000 chars for efficiency
+        )
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=5
+            )
+        )
+        answer = response.text.strip().upper()
+        return "YES" in answer
+    except Exception as e:
+        print(f"⚠️ Error classifying message: {e}")
+        # Fallback to length heuristic if API fails
+        return len(text) > 1000
+
+
+@client.on(events.NewMessage)
+async def handle_new_message(event):
+    """Listen for incoming Telegram messages, classify, print to console, and analyze if research paper."""
+    message_text = event.text or ""
+    
+    # Check for PDF file attachment
+    is_pdf = False
+    pdf_file_name = ""
+    if event.message.media and event.message.file:
+        mime_type = event.message.file.mime_type or ""
+        file_name = event.message.file.name or ""
+        if mime_type == "application/pdf" or file_name.lower().endswith(".pdf"):
+            is_pdf = True
+            pdf_file_name = file_name or "document.pdf"
+            
+    # If it's neither text nor PDF, skip
+    if not message_text and not is_pdf:
+        return
+        
+    sender = await event.get_sender()
+    sender_name = "Unknown"
+    sender_username = "unknown"
+    sender_id = "unknown"
+    if sender:
+        sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or "Unknown"
+        sender_username = sender.username or "No Username"
+        sender_id = sender.id
+        
+    triggered = False
+    paper_text = ""
+    temp_path = None
+    
+    try:
+        # 1. Handle PDF document parsing
+        if is_pdf:
+            # Download file locally
+            temp_path = await event.message.download_media(file="temp_paper.pdf")
+            
+            # Extract text using our Open-Closed parser component
+            try:
+                parser = ParserFactory.get_parser("pdf")
+                extracted_text = await asyncio.to_thread(parser.extract_text, temp_path)
+            except Exception as e:
+                print(f"❌ Error parsing PDF file: {e}")
+                extracted_text = ""
+                
+            # Classify the extracted text to see if it is a research paper
+            if extracted_text:
+                # Running classification check in a thread pool
+                is_paper = await asyncio.to_thread(check_if_research_paper, extracted_text)
+                if is_paper:
+                    triggered = True
+                    paper_text = extracted_text
+                    
+        # 2. Handle Text messages
+        else:
+            # Check if message starts with a manual command trigger
+            for trigger in TRIGGERS:
+                if message_text.lower().startswith(trigger):
+                    triggered = True
+                    paper_text = message_text[len(trigger):].strip()
+                    break
+                    
+            # Check if it's a trigger reply
+            if not triggered and message_text.lower().strip() in TRIGGERS:
+                replied_msg = await event.get_reply_message()
+                if replied_msg and replied_msg.text:
+                    triggered = True
+                    paper_text = replied_msg.text.strip()
+                    
+            # If not command-triggered, check if it is dynamically a research paper
+            if not triggered:
+                # Run classification check in a thread pool to avoid blocking the event loop
+                is_paper = await asyncio.to_thread(check_if_research_paper, message_text)
+                if is_paper:
+                    triggered = True
+                    paper_text = message_text.strip()
+                    
+        # Print to console in a nice format (differentiating normal text, normal PDF, and research)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n{'='*70}")
+        print(f"📨 NEW MESSAGE RECEIVED!")
+        print(f"{'='*70}")
+        print(f"⏰ Time: {timestamp}")
+        print(f"👤 From: {sender_name} (@{sender_username})")
+        print(f"🆔 User ID: {sender_id}")
+        if triggered:
+            if is_pdf:
+                print(f"💬 Message: Research (PDF: {pdf_file_name})")
+            else:
+                print(f"💬 Message: Research")
+        else:
+            if is_pdf:
+                print(f"💬 Message: PDF Attachment ({pdf_file_name})")
+            else:
+                print(f"💬 Message: {message_text}")
+        print(f"{'='*70}\n")
+        
+        # If not triggered/classified, return early
+        if not triggered:
+            return
+            
+        if not paper_text:
+            print(f"⚠️ Triggered analysis, but paper text was empty.")
+            return
+            
+        # Run Gemini analysis (in thread pool to avoid blocking Telethon)
+        print(f"[{datetime.now()}] Analyzing paper from {sender_name} (@{sender_username})...")
+        analysis: AnalysisResult = await asyncio.to_thread(run_gemini_analysis, paper_text)
+        
+        # Prepare the Apps Script payload
+        payload = {
+            "title": analysis.title,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sender": f"{sender_name} (@{sender_username})",
+            "studentSummary": analysis.studentSummary,
+            "facultySummary": analysis.facultySummary,
+            "phdSummary": analysis.phdSummary,
+            "productSummary": analysis.productSummary
+        }
+        
+        # Call Apps Script Web App (in thread pool)
+        print(f"[{datetime.now()}] Appending analysis to Google Doc via Apps Script...")
+        script_res = await asyncio.to_thread(post_to_google_doc, payload)
+        
+        # Console Logs
+        if script_res.get("status") == "success":
+            print(f"[{datetime.now()}] ✅ Successfully saved analysis of '{analysis.title}' to Google Docs.")
+        else:
+            error_msg = script_res.get("message", "Unknown error from Apps Script")
+            print(f"[{datetime.now()}] ❌ Failed to write to Google Docs: {error_msg}")
+            
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ Error during analysis process: {e}")
+        
+    finally:
+        # Cleanup temporary PDF files
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception as e:
+                print(f"⚠️ Error cleaning up temporary file: {e}")
+
+
+async def main():
+    """Start the Telethon listener."""
+    print(f"\n{'='*70}")
+    print(f"🚀 TELEGRAM RESEARCH PAPER ANALYSER RUNNING")
+    print(f"{'='*70}")
+    print(f"📱 API_ID: {API_ID[:10]}..." if API_ID else "❌ API_ID not set")
+    print(f"🔐 API_HASH: {API_HASH[:10]}..." if API_HASH else "❌ API_HASH not set")
+    print(f"📞 Phone: {PHONE_NUMBER}")
+    print(f"🔑 Gemini Key: {'✅ Set' if GEMINI_API_KEY else '❌ Missing'}")
+    print(f"🔗 Apps Script: {'✅ Set' if APPS_SCRIPT_URL else '❌ Missing'}")
+    print(f"{'='*70}\n")
+    
+    try:
+        print("🔄 Connecting to Telegram...")
+        await client.start(phone=PHONE_NUMBER)
+        print("✅ Connected successfully!")
+        print("👂 Listening for /analyze commands...")
+        print("⏹️  Press CTRL+C to stop\n")
+        await client.run_until_disconnected()
+    except Exception as e:
+        print(f"❌ Connection Error: {e}")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n\n👋 Analyser stopped by user.")
