@@ -5,6 +5,7 @@ and appends summaries to a Google Doc via Google Apps Script.
 """
 
 import os
+import re
 import asyncio
 import requests
 from datetime import datetime
@@ -114,6 +115,43 @@ def post_to_google_doc(payload: dict) -> dict:
     return response.json()
 
 
+def extract_pdf_url(text: str) -> str:
+    """Extract a PDF URL from text, supporting various patterns including • PDF: <url>."""
+    if not text:
+        return ""
+        
+    # Check specifically for "PDF:" or "• PDF:" prefix followed by URL
+    match_bullet = re.search(r'(?:PDF:\s*|• PDF:\s*)(https?://\S+)', text, re.IGNORECASE)
+    if match_bullet:
+        return match_bullet.group(1).strip()
+        
+    # General fallback: search for any URL that ends with .pdf or contains /pdf/
+    urls = re.findall(r'(https?://\S+)', text)
+    for url in urls:
+        # Strip trailing chars like commas, brackets, etc.
+        clean_url = url.rstrip(').,;*#')
+        if ".pdf" in clean_url.lower() or "/pdf/" in clean_url.lower():
+            return clean_url
+            
+    return ""
+
+
+def download_pdf_from_url(url: str, dest_path: str):
+    """Download a file from a URL to a local destination."""
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/91.0.4472.124 Safari/537.36'
+        )
+    }
+    response = requests.get(url, headers=headers, stream=True, timeout=30)
+    response.raise_for_status()
+    with open(dest_path, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+
 def check_if_research_paper(text: str) -> bool:
     """Check if the text is a research paper or academic text using length and a fast LLM check."""
     # Length heuristic: Research papers or abstracts are rarely shorter than 500 characters
@@ -150,7 +188,7 @@ async def handle_new_message(event):
     """Listen for incoming Telegram messages, classify, print to console, and analyze if research paper."""
     message_text = event.text or ""
     
-    # Check for PDF file attachment
+    # 1. Check for PDF file attachment
     is_pdf = False
     pdf_file_name = ""
     if event.message.media and event.message.file:
@@ -160,8 +198,16 @@ async def handle_new_message(event):
             is_pdf = True
             pdf_file_name = file_name or "document.pdf"
             
-    # If it's neither text nor PDF, skip
-    if not message_text and not is_pdf:
+    # 2. Check for PDF URL link inside the message text
+    is_pdf_url = False
+    pdf_url = ""
+    if not is_pdf and message_text:
+        pdf_url = extract_pdf_url(message_text)
+        if pdf_url:
+            is_pdf_url = True
+            
+    # If it's neither text, nor PDF attachment, nor PDF URL, skip
+    if not message_text and not is_pdf and not is_pdf_url:
         return
         
     sender = await event.get_sender()
@@ -178,11 +224,17 @@ async def handle_new_message(event):
     temp_path = None
     
     try:
-        # 1. Handle PDF document parsing
-        if is_pdf:
-            # Download file locally
-            temp_path = await event.message.download_media(file="temp_paper.pdf")
-            
+        # Handle PDF attachment or PDF URL
+        if is_pdf or is_pdf_url:
+            if is_pdf:
+                # Download from Telegram attachment
+                temp_path = await event.message.download_media(file="temp_paper.pdf")
+            else:
+                # Download from PDF link in message text
+                temp_path = "temp_paper.pdf"
+                print(f"[{datetime.now()}] Downloading PDF from link: {pdf_url}...")
+                await asyncio.to_thread(download_pdf_from_url, pdf_url, temp_path)
+                
             # Extract text using our Open-Closed parser component
             try:
                 parser = ParserFactory.get_parser("pdf")
@@ -193,13 +245,12 @@ async def handle_new_message(event):
                 
             # Classify the extracted text to see if it is a research paper
             if extracted_text:
-                # Running classification check in a thread pool
                 is_paper = await asyncio.to_thread(check_if_research_paper, extracted_text)
                 if is_paper:
                     triggered = True
                     paper_text = extracted_text
                     
-        # 2. Handle Text messages
+        # Handle Text-only messages
         else:
             # Check if message starts with a manual command trigger
             for trigger in TRIGGERS:
@@ -234,11 +285,15 @@ async def handle_new_message(event):
         if triggered:
             if is_pdf:
                 print(f"💬 Message: Research (PDF: {pdf_file_name})")
+            elif is_pdf_url:
+                print(f"💬 Message: Research Link (PDF Link: {pdf_url})")
             else:
                 print(f"💬 Message: Research")
         else:
             if is_pdf:
                 print(f"💬 Message: PDF Attachment ({pdf_file_name})")
+            elif is_pdf_url:
+                print(f"💬 Message: PDF Link ({pdf_url})")
             else:
                 print(f"💬 Message: {message_text}")
         print(f"{'='*70}\n")
