@@ -11,6 +11,7 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
@@ -23,6 +24,7 @@ load_dotenv()
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+TELEGRAM_SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING", "").strip()
 
 # Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -34,8 +36,8 @@ APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
 TRIGGERS = ["/analyze", "/analyse"]
 
 # Validate basic configuration
-if not API_ID or not API_HASH or not PHONE_NUMBER:
-    print("❌ Missing Telegram credentials in .env!")
+if not API_ID or not API_HASH:
+    print("❌ Missing Telegram credentials (API_ID, API_HASH) in .env!")
     exit(1)
 
 if not GEMINI_API_KEY:
@@ -46,8 +48,13 @@ if not APPS_SCRIPT_URL:
         "⚠️  APPS_SCRIPT_URL is not set. Exporting to Google Docs will fail unless set."
     )
 
-# Initialize Clients
-client = TelegramClient("session", API_ID, API_HASH)
+# Initialize Client: Use StringSession (for Render/Cloud) or local 'session' file
+session_handler = (
+    StringSession(TELEGRAM_SESSION_STRING)
+    if TELEGRAM_SESSION_STRING
+    else "session"
+)
+client = TelegramClient(session_handler, API_ID, API_HASH)
 
 # Initialize Gemini Client if key exists
 gemini_client = None
@@ -389,14 +396,19 @@ async def main():
     print(f"{'='*70}")
     print(f"📱 API_ID: {API_ID[:10]}..." if API_ID else "❌ API_ID not set")
     print(f"🔐 API_HASH: {API_HASH[:10]}..." if API_HASH else "❌ API_HASH not set")
-    print(f"📞 Phone: {PHONE_NUMBER}")
+    print(
+        f"🧵 Session Mode: {'StringSession (Cloud)' if TELEGRAM_SESSION_STRING else f'Local File (Phone: {PHONE_NUMBER})'}"
+    )
     print(f"🔑 Gemini Key: {'✅ Set' if GEMINI_API_KEY else '❌ Missing'}")
     print(f"🔗 Apps Script: {'✅ Set' if APPS_SCRIPT_URL else '❌ Missing'}")
     print(f"{'='*70}\n")
 
     try:
         print("🔄 Connecting to Telegram...")
-        await client.start(phone=PHONE_NUMBER)
+        if TELEGRAM_SESSION_STRING:
+            await client.start()
+        else:
+            await client.start(phone=PHONE_NUMBER)
         print("✅ Connected successfully!")
         print("👂 Listening for /analyze commands...")
         print("⏹️  Press CTRL+C to stop\n")

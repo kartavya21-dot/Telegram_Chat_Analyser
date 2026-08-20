@@ -138,3 +138,33 @@ The analyser logs message traffic cleanly without writing back to the Telegram c
 [2026-08-20 15:30:22] Appending analysis to Google Doc via Apps Script...
 [2026-08-20 15:30:24] ✅ Successfully saved analysis of 'Attention Is All You Need' to Google Docs.
 ```
+
+---
+
+## ☁️ Deploying to Render (Headless Cloud Hosting)
+
+Because cloud hosts like Render run in non-interactive environments without a terminal to type OTP codes, Telethon uses a **`StringSession`** (a single authorization token passed as an environment variable):
+
+### Step 1: Generate your Session String locally (one-time)
+Run the session generator script on your local PC:
+```bash
+python generate_session.py
+```
+Enter your phone number and the Telegram OTP code in your terminal. Copy the generated `TELEGRAM_SESSION_STRING`.
+
+### Step 2: Create a Background Worker on Render
+1. Go to your [Render Dashboard](https://dashboard.render.com/) ➔ **New +** ➔ **Background Worker** (or **Web Service** if worker is not on your plan).
+2. Connect your Git repository.
+3. Configure the build & start commands:
+   - **Environment**: `Python`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python analyser.py`
+4. Under **Environment Variables**, add:
+   - `API_ID`: `your_telegram_api_id`
+   - `API_HASH`: `your_telegram_api_hash`
+   - `TELEGRAM_SESSION_STRING`: *(Paste the session string generated from Step 1)*
+   - `GEMINI_API_KEY`: `your_gemini_api_key`
+   - `APPS_SCRIPT_URL`: `https://script.google.com/macros/s/.../exec`
+5. Click **Deploy**.
+
+Render will now run your Telegram listener 24/7 without needing any terminal input!
