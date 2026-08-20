@@ -60,17 +60,17 @@ class AnalysisResult(BaseModel):
     title: str = Field(
         description="The formal title of the research paper (extracted or inferred)."
     )
-    studentSummary: str = Field(
-        description="Summary for students. Explains the paper in plain English, defines key concepts/jargon, uses analogies, and highlights main learning outcomes. Use **bolding** for emphasis. 2-3 paragraphs."
+    studentSummary: list[str] = Field(
+        description="List of 4 to 5 concise bullet points for students in simple English. Each item in the list is a single bullet point string."
     )
-    facultySummary: str = Field(
-        description="Summary for PhD candidates or faculty pursuing PhD. Focuses on research methodology, gaps in literature, how it builds on existing work, and potential thesis/dissertation directions. Use **bolding**. 2-3 paragraphs."
+    facultySummary: list[str] = Field(
+        description="List of 4 to 5 concise bullet points for PhD-pursuing faculty covering methodology, literature gaps, and thesis directions. Each item in the list is a single bullet point string."
     )
-    phdSummary: str = Field(
-        description="Summary for PhD holders. Highly technical and academic. Critique the methodology, summarize core contributions, mathematical formulations or algorithmic architecture, and list limitations/novelty. Use **bolding**. 2-3 paragraphs."
+    phdSummary: list[str] = Field(
+        description="List of 4 to 5 concise bullet points for PhD holders covering technical novelty, algorithmic/mathematical rigor, and limitations. Each item in the list is a single bullet point string."
     )
-    productSummary: str = Field(
-        description="Summary as a product. Analyzes the research's commercial potential, target market, proposed MVP features, technical feasibility, and business model/monetization strategy. Use **bolding**. 2-3 paragraphs."
+    productSummary: list[str] = Field(
+        description="List of 4 to 5 concise bullet points for product managers covering commercial applications, target market, MVP, and business value. Each item in the list is a single bullet point string."
     )
 
 
@@ -81,36 +81,29 @@ def run_gemini_analysis(text: str) -> AnalysisResult:
             "Gemini client is not initialized. Please set GEMINI_API_KEY in .env."
         )
 
-    # prompt = (
-    #     "You are an expert research assistant. Read and analyze the following research paper text. "
-    #     "Provide a comprehensive, high-quality analysis tailored to four distinct audiences, make use of points to describe your idea rather than paragraph, also make sure that the text are finally rendered on the google docs, and this are your four distinct audience: "
-    #     "1. Students (simplified explanations, analogies, key terms defined)\n"
-    #     "2. PhD-pursuing Faculty (methodology, research gaps, literature context, thesis extensions)\n"
-    #     "3. PhD Holders (deep technical critique, algorithmic/architectural novelties, mathematical rigorousness, limitations)\n"
-    #     "4. Product Managers/Entrepreneurs (business applicability, target market, commercialization viability, MVP features)\n\n"
-    #     f"Research Paper Text:\n{text}"
-    # )
-
-    prompt = f""" Analyze the research paper below for four audiences. Use Markdown and ONLY 4–5 concise bullet points per section. Avoid paragraphs, repetition, and unsupported claims. If information is missing, say "Not specified in the paper." ## 🎓 Students - Problem, intuition, key terms, approach, result ## 🔬 PhD Faculty - Methodology, literature context, research gaps, extensions ## 🧠 PhD Holders - Technical novelty, rigor, strengths/weaknesses, evaluation, limitations ## 💼 Product Managers / Entrepreneurs - Applications, target market, business value, challenges, MVP ## 📌 Overall Takeaway - Contribution, key insight, limitation, future direction, significance For multiple papers, separate each analysis with `---` and start each on a new section. Research Paper: {text} """
+    prompt = (
+        "Analyze the following research paper and generate structured, concise bullet points for four distinct audiences.\n\n"
+        "STRICT REQUIREMENTS:\n"
+        "- Return a JSON object where each category is a LIST of 4 to 5 concise bullet point strings.\n"
+        "- Each bullet point MUST be a single, punchy sentence (15-25 words max).\n"
+        "- Do NOT write long paragraphs.\n"
+        "- You may use **bold** keywords for key concepts.\n\n"
+        f"Research Paper:\n{text}"
+    )
 
     response = gemini_client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=(
-                "You are a world-class academic researcher and product strategist. "
-                "Your job is to analyze research texts and format summaries according to the requested schema. "
-                "Make sure each summary is detailed, highly informative, and specifically tailored to its target group. "
-                "Do not summarize in single sentences; write 2 to 3 rich paragraphs per section."
+                "You are an expert research analyst. You summarize complex research papers into clear, punchy bullet points. "
+                "For every category, provide an array/list of 4-5 concise bullet point strings. Never generate paragraphs."
             ),
             response_mime_type="application/json",
             response_schema=AnalysisResult,
-            temperature=0.2,
+            temperature=0.1,
         ),
     )
-
-    print("Response: ")
-    print(response)
 
     # Return the parsed Pydantic object
     return response.parsed
@@ -122,7 +115,7 @@ def post_to_google_doc(payload: dict) -> dict:
         raise ValueError(
             "Apps Script Web App URL is not configured. Please set APPS_SCRIPT_URL in .env."
         )
-
+    
     response = requests.post(APPS_SCRIPT_URL, json=payload, timeout=30)
     response.raise_for_status()
     return response.json()
@@ -332,15 +325,36 @@ async def handle_new_message(event):
             run_gemini_analysis, paper_text
         )
 
-        # Prepare the Apps Script payload
+        # Prepare the Apps Script payload (compatible with both array and string handlers in Apps Script)
+        student_summary = (
+            "\n".join(f"- {item.lstrip('-•* ')}" for item in analysis.studentSummary)
+            if isinstance(analysis.studentSummary, list)
+            else str(analysis.studentSummary)
+        )
+        faculty_summary = (
+            "\n".join(f"- {item.lstrip('-•* ')}" for item in analysis.facultySummary)
+            if isinstance(analysis.facultySummary, list)
+            else str(analysis.facultySummary)
+        )
+        phd_summary = (
+            "\n".join(f"- {item.lstrip('-•* ')}" for item in analysis.phdSummary)
+            if isinstance(analysis.phdSummary, list)
+            else str(analysis.phdSummary)
+        )
+        product_summary = (
+            "\n".join(f"- {item.lstrip('-•* ')}" for item in analysis.productSummary)
+            if isinstance(analysis.productSummary, list)
+            else str(analysis.productSummary)
+        )
+
         payload = {
             "title": analysis.title,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "sender": f"{sender_name} (@{sender_username})",
-            "studentSummary": analysis.studentSummary,
-            "facultySummary": analysis.facultySummary,
-            "phdSummary": analysis.phdSummary,
-            "productSummary": analysis.productSummary,
+            "studentSummary": student_summary,
+            "facultySummary": faculty_summary,
+            "phdSummary": phd_summary,
+            "productSummary": product_summary,
         }
 
         # Call Apps Script Web App (in thread pool)

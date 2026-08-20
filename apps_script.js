@@ -5,31 +5,24 @@
  * 1. Open the Google Doc where you want to append summaries.
  * 2. Click Extensions > Apps Script.
  * 3. Delete any code in the editor and paste this code.
- * 4. Replace 'YOUR_DOCUMENT_ID_HERE' with your Google Doc's ID (found in the Doc's URL).
- * 5. Click Deploy > New Deployment.
- * 6. Select type: Web App.
- * 7. Description: Telegram Chat Analyser
- * 8. Execute as: Me (your email)
- * 9. Who has access: Anyone
- * 10. Click Deploy, authorize permissions, and copy the Web App URL.
- * 11. Paste the URL into your python .env file as APPS_SCRIPT_URL.
+ * 4. Replace 'YOUR_DOCUMENT_ID_HERE' with your Google Doc's ID.
+ * 5. Click Deploy > Manage Deployments > Edit (pencil icon) > Version: New version > Deploy.
  */
 
 // Replace this with your Google Doc ID
-const DOCUMENT_ID = 'abcdefg12345';
+const DOCUMENT_ID = 'YOUR_DOCUMENT_ID_HERE';
 
 function doPost(e) {
   try {
-    // Parse the incoming JSON payload
     const data = JSON.parse(e.postData.contents);
     const paperTitle = data.title || 'Untitled Research Paper';
     const timestamp = data.timestamp || new Date().toLocaleString();
     const sender = data.sender || 'Unknown Sender';
     
-    const studentSummary = data.studentSummary || 'No student summary generated.';
-    const facultySummary = data.facultySummary || 'No faculty summary generated.';
-    const phdSummary = data.phdSummary || 'No PhD summary generated.';
-    const productSummary = data.productSummary || 'No product summary generated.';
+    const studentSummary = data.studentSummary || '';
+    const facultySummary = data.facultySummary || '';
+    const phdSummary = data.phdSummary || '';
+    const productSummary = data.productSummary || '';
 
     // Open the Document
     const doc = DocumentApp.openById(DOCUMENT_ID);
@@ -37,8 +30,7 @@ function doPost(e) {
     
     // Add spacing from previous entry if body is not empty
     if (body.getText().trim().length > 0) {
-      body.appendParagraph('\n\n\n').setFontSize(11);
-      // Append a horizontal line separator
+      body.appendParagraph('\n\n');
       body.appendHorizontalRule();
     }
     
@@ -46,13 +38,13 @@ function doPost(e) {
     const titlePara = body.appendParagraph('📄 Research Paper Analysis');
     titlePara.setHeading(DocumentApp.ParagraphHeading.HEADING1);
     titlePara.setFontFamily('Arial');
-    titlePara.setFontSize(20);
+    titlePara.setFontSize(18);
     titlePara.setBold(true);
     titlePara.setForegroundColor('#1a73e8'); // Google Blue
     
     // Paper Title
     const paperPara = body.appendParagraph(`Title: "${paperTitle}"`);
-    paperPara.setFontSize(14);
+    paperPara.setFontSize(13);
     paperPara.setItalic(true);
     paperPara.setBold(true);
     paperPara.setForegroundColor('#202124');
@@ -63,74 +55,77 @@ function doPost(e) {
     metaPara.setItalic(true);
     metaPara.setForegroundColor('#5f6368');
     
-    body.appendParagraph(''); // Space
+    body.appendParagraph('');
     
-    // Helper function to append a styled section
+    // Helper function to append a styled section with bullet points
     function appendSection(title, content, headingColor) {
       const heading = body.appendParagraph(title);
       heading.setHeading(DocumentApp.ParagraphHeading.HEADING2);
       heading.setFontFamily('Arial');
-      heading.setFontSize(14);
+      heading.setFontSize(13);
       heading.setBold(true);
       heading.setForegroundColor(headingColor);
       
-      // Parse content by newlines and append paragraphs nicely
-      const paragraphs = content.split('\n');
-      paragraphs.forEach(function(paraText) {
-        const trimmed = paraText.trim();
-        if (trimmed.length > 0) {
-          const para = body.appendParagraph(trimmed);
-          para.setFontFamily('Arial');
-          para.setFontSize(11);
-          para.setLineSpacing(1.15);
-          para.setForegroundColor('#3c4043');
-          
-          // Apply basic markdown bold styling if present
-          applyFormatting(para);
-        }
-      });
+      // Normalize content to an array of lines
+      var lines = [];
+      if (Array.isArray(content)) {
+        lines = content;
+      } else if (typeof content === 'string') {
+        lines = content.split('\n');
+      }
       
-      body.appendParagraph(''); // spacing
-    }
-    
-    // Simple parser for **bold** text in Apps Script
-    function applyFormatting(paragraph) {
-      const text = paragraph.getText();
-      const boldRegex = /\*\*(.*?)\*\*/g;
-      let match;
-      let offset = 0;
-      
-      // We operate on a copy of the text to find offsets, but since we modify
-      // the paragraph in place, we need to handle formatting ranges.
-      // However, modifying characters changes offsets. Instead, we can do a simplified search:
-      // A cleaner way is using paragraph.editAsText().
-      const textElement = paragraph.editAsText();
-      let formattedText = text;
-      
-      // Let's do a simple formatting pass:
-      // Remove double asterisks and bold the text inside them
-      while ((match = boldRegex.exec(text)) !== null) {
-        const cleanContent = match[1];
-        const matchStart = match.index;
-        const matchEnd = match.index + match[0].length;
+      for (var i = 0; i < lines.length; i++) {
+        var rawLine = String(lines[i] || '').trim();
+        // Remove leading dash, bullet, or asterisk
+        rawLine = rawLine.replace(/^[-•*]\s*/, '').trim();
+        if (rawLine.length === 0) continue;
         
-        // Find in clean text
-        // To be simple and robust in Apps Script:
-        // We find the index of "**" + cleanContent + "**" in the current element text.
-        const currentText = textElement.getText();
-        const startIdx = currentText.indexOf(match[0]);
-        if (startIdx !== -1) {
-          const endIdx = startIdx + match[0].length;
-          textElement.deleteText(startIdx, startIdx + 1); // delete first *
-          textElement.deleteText(startIdx, startIdx + 1); // delete second *
-          
-          // Now the text is shifted, cleanContent starts at startIdx and ends at startIdx + cleanContent.length - 1
-          const boldEndIdx = startIdx + cleanContent.length - 1;
-          if (boldEndIdx >= startIdx) {
-            textElement.setBold(startIdx, boldEndIdx, true);
+        // Parse bold markers and calculate clean text offsets
+        var cleanText = '';
+        var boldRanges = [];
+        var regex = /\*\*(.*?)\*\*/g;
+        var lastIdx = 0;
+        var match;
+        
+        while ((match = regex.exec(rawLine)) !== null) {
+          cleanText += rawLine.substring(lastIdx, match.index);
+          var bStart = cleanText.length;
+          var bContent = match[1];
+          cleanText += bContent;
+          var bEnd = cleanText.length - 1;
+          if (bEnd >= bStart) {
+            boldRanges.push({start: bStart, end: bEnd});
+          }
+          lastIdx = regex.lastIndex;
+        }
+        cleanText += rawLine.substring(lastIdx);
+        // Remove any orphan/unclosed asterisks (e.g. StateM**)
+        cleanText = cleanText.replace(/\*\*/g, '').trim();
+        
+        if (cleanText.length === 0) continue;
+        
+        // Append bullet item directly with text (prevents empty element exception)
+        var listItem = body.appendListItem(cleanText);
+        listItem.setGlyphType(DocumentApp.GlyphType.BULLET);
+        listItem.setFontFamily('Arial');
+        listItem.setFontSize(11);
+        listItem.setLineSpacing(1.2);
+        listItem.setForegroundColor('#3c4043');
+        
+        // Apply bold formatting to the exact matched ranges
+        if (boldRanges.length > 0) {
+          var textElement = listItem.editAsText();
+          textElement.setBold(false);
+          for (var r = 0; r < boldRanges.length; r++) {
+            var range = boldRanges[r];
+            if (range.start < cleanText.length && range.end < cleanText.length) {
+              textElement.setBold(range.start, range.end, true);
+            }
           }
         }
       }
+      
+      body.appendParagraph('');
     }
     
     // Append the four summaries
@@ -139,7 +134,7 @@ function doPost(e) {
     appendSection('🧠 3. Summary for PhD Holders', phdSummary, '#a142f4');           // Purple
     appendSection('💼 4. Research Paper as a Product', productSummary, '#12b5cb');   // Cyan
 
-    // Save and close to apply changes immediately
+    // Save and close
     doc.saveAndClose();
 
     return ContentService.createTextOutput(JSON.stringify({
