@@ -81,6 +81,9 @@ API_ID=your_api_id
 API_HASH=your_api_hash
 PHONE_NUMBER=your_telegram_phone_number_with_country_code # e.g. +91XXXXXXXXXX
 
+# Optional for cloud hosting (Render / Railway / Heroku):
+TELEGRAM_SESSION_STRING=your_generated_session_string_here
+
 # Gemini API Key (obtained from aistudio.google.com)
 GEMINI_API_KEY=your_gemini_api_key
 

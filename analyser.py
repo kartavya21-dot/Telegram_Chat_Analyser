@@ -7,7 +7,9 @@ and appends summaries to a Google Doc via Google Apps Script.
 import os
 import re
 import asyncio
+import threading
 import requests
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
@@ -389,8 +391,34 @@ async def handle_new_message(event):
                 print(f"⚠️ Error cleaning up temporary file: {e}")
 
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK - Telegram Chat Analyser is running")
+
+    def log_message(self, format, *args):
+        # Silence HTTP server logs to keep console clean
+        pass
+
+
+def start_health_check_server():
+    """Start a lightweight HTTP server on $PORT for Web Service health checks (Render / Railway)."""
+    port = int(os.getenv("PORT", "8080"))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        print(f"🌐 Health check HTTP server listening on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        print(f"⚠️ Health check server error: {e}")
+
+
 async def main():
     """Start the Telethon listener."""
+    # Start HTTP health check server in background thread for Web Service hosting
+    threading.Thread(target=start_health_check_server, daemon=True).start()
+
     print(f"\n{'='*70}")
     print(f"🚀 TELEGRAM RESEARCH PAPER ANALYSER RUNNING")
     print(f"{'='*70}")
