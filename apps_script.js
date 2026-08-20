@@ -16,7 +16,7 @@
  */
 
 // Replace this with your Google Doc ID
-const DOCUMENT_ID = '1AhvC54in_nwWJ9x5UAX6Zn9gBjRCTo7oWR5slF3IKRI';
+const DOCUMENT_ID = 'abcdefg12345';
 
 function doPost(e) {
   try {
