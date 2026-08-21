@@ -244,6 +244,13 @@ async def handle_new_message(event):
     paper_text = ""
     temp_path = None
 
+    # Extract exact Telegram message sent timestamp
+    msg_date = event.message.date if (event and event.message) else None
+    if msg_date:
+        sent_timestamp = msg_date.strftime("%Y-%m-%d %H:%M:%S UTC")
+    else:
+        sent_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     try:
         # Handle PDF attachment or PDF URL
         if is_pdf or is_pdf_url:
@@ -288,6 +295,8 @@ async def handle_new_message(event):
                 if replied_msg and replied_msg.text:
                     triggered = True
                     paper_text = replied_msg.text.strip()
+                    if replied_msg.date:
+                        sent_timestamp = replied_msg.date.strftime("%Y-%m-%d %H:%M:%S UTC")
 
             # If not command-triggered, check if it is dynamically a research paper
             if not triggered:
@@ -300,11 +309,10 @@ async def handle_new_message(event):
                     paper_text = message_text.strip()
 
         # Print to console in a nice format (differentiating normal text, normal PDF, and research)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n{'='*70}")
         print(f"📨 NEW MESSAGE RECEIVED!")
         print(f"{'='*70}")
-        print(f"⏰ Time: {timestamp}")
+        print(f"⏰ Sent Time: {sent_timestamp}")
         print(f"👤 From: {sender_name} (@{sender_username})")
         print(f"🆔 User ID: {sender_id}")
         if triggered:
@@ -363,7 +371,7 @@ async def handle_new_message(event):
 
         payload = {
             "title": analysis.title,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": sent_timestamp,
             "sender": f"{sender_name} (@{sender_username})",
             "studentSummary": student_summary,
             "facultySummary": faculty_summary,
