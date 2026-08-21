@@ -155,8 +155,8 @@ python generate_session.py
 ```
 Enter your phone number and the Telegram OTP code in your terminal. Copy the generated `TELEGRAM_SESSION_STRING`.
 
-### Step 2: Create a Background Worker on Render
-1. Go to your [Render Dashboard](https://dashboard.render.com/) ➔ **New +** ➔ **Background Worker** (or **Web Service** if worker is not on your plan).
+### Step 2: Create a Web Service or Background Worker on Render
+1. Go to your [Render Dashboard](https://dashboard.render.com/) ➔ **New +** ➔ **Web Service** (or **Background Worker**).
 2. Connect your Git repository.
 3. Configure the build & start commands:
    - **Environment**: `Python`

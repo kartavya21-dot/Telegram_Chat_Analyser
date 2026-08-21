@@ -4,6 +4,7 @@ Listens for commands on Telegram, analyzes papers using Gemini,
 and appends summaries to a Google Doc via Google Apps Script.
 """
 
+import sys
 import os
 import re
 import asyncio
@@ -11,6 +12,10 @@ import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
+
+# Ensure stdout is unbuffered so print logs appear immediately in Render / Docker logs
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -419,30 +424,40 @@ async def main():
     # Start HTTP health check server in background thread for Web Service hosting
     threading.Thread(target=start_health_check_server, daemon=True).start()
 
-    print(f"\n{'='*70}")
-    print(f"🚀 TELEGRAM RESEARCH PAPER ANALYSER RUNNING")
-    print(f"{'='*70}")
-    print(f"📱 API_ID: {API_ID[:10]}..." if API_ID else "❌ API_ID not set")
-    print(f"🔐 API_HASH: {API_HASH[:10]}..." if API_HASH else "❌ API_HASH not set")
+    print(f"\n{'='*70}", flush=True)
+    print(f"🚀 TELEGRAM RESEARCH PAPER ANALYSER RUNNING", flush=True)
+    print(f"{'='*70}", flush=True)
+    print(f"📱 API_ID: {API_ID[:10]}..." if API_ID else "❌ API_ID not set", flush=True)
+    print(f"🔐 API_HASH: {API_HASH[:10]}..." if API_HASH else "❌ API_HASH not set", flush=True)
     print(
-        f"🧵 Session Mode: {'StringSession (Cloud)' if TELEGRAM_SESSION_STRING else f'Local File (Phone: {PHONE_NUMBER})'}"
+        f"🧵 Session Mode: {'StringSession (Cloud)' if TELEGRAM_SESSION_STRING else f'Local File (Phone: {PHONE_NUMBER})'}",
+        flush=True
     )
-    print(f"🔑 Gemini Key: {'✅ Set' if GEMINI_API_KEY else '❌ Missing'}")
-    print(f"🔗 Apps Script: {'✅ Set' if APPS_SCRIPT_URL else '❌ Missing'}")
-    print(f"{'='*70}\n")
+    print(f"🔑 Gemini Key: {'✅ Set' if GEMINI_API_KEY else '❌ Missing'}", flush=True)
+    print(f"🔗 Apps Script: {'✅ Set' if APPS_SCRIPT_URL else '❌ Missing'}", flush=True)
+    print(f"{'='*70}\n", flush=True)
+
+    # Check if running in headless environment without session string
+    is_interactive = sys.stdin and sys.stdin.isatty()
+    if not TELEGRAM_SESSION_STRING and not is_interactive:
+        print("❌ FATAL ERROR: TELEGRAM_SESSION_STRING environment variable is missing!", flush=True)
+        print("Render runs in a headless environment and cannot prompt for interactive phone OTP codes.", flush=True)
+        print("Please generate TELEGRAM_SESSION_STRING locally (`python generate_session.py`) and add it to Render's Environment Variables.", flush=True)
+        sys.exit(1)
 
     try:
-        print("🔄 Connecting to Telegram...")
+        print("🔄 Connecting to Telegram...", flush=True)
         if TELEGRAM_SESSION_STRING:
             await client.start()
         else:
             await client.start(phone=PHONE_NUMBER)
-        print("✅ Connected successfully!")
-        print("👂 Listening for /analyze commands...")
-        print("⏹️  Press CTRL+C to stop\n")
+        print("✅ Connected successfully!", flush=True)
+        print("👂 Listening for messages & research papers...", flush=True)
+        print("⏹️  Press CTRL+C to stop\n", flush=True)
         await client.run_until_disconnected()
     except Exception as e:
-        print(f"❌ Connection Error: {e}")
+        print(f"❌ Connection Error: {e}", flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
