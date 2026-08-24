@@ -427,10 +427,35 @@ def start_health_check_server():
         print(f"⚠️ Health check server error: {e}")
 
 
+def keep_alive_ping():
+    """Periodically ping own health check endpoint to prevent Render free-tier spin-down."""
+    import time
+
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    port = int(os.getenv("PORT", "8080"))
+
+    # Use the Render external URL if available, otherwise ping localhost
+    if render_url:
+        ping_url = render_url
+    else:
+        ping_url = f"http://localhost:{port}"
+
+    while True:
+        time.sleep(300)  # Ping every 5 minutes
+        try:
+            resp = requests.get(ping_url, timeout=10)
+            # Silently succeed; only log failures
+        except Exception as e:
+            print(f"⚠️ Keep-alive ping failed: {e}", flush=True)
+
+
 async def main():
     """Start the Telethon listener."""
     # Start HTTP health check server in background thread for Web Service hosting
     threading.Thread(target=start_health_check_server, daemon=True).start()
+
+    # Start keep-alive self-ping to prevent Render free-tier spin-down
+    threading.Thread(target=keep_alive_ping, daemon=True).start()
 
     print(f"\n{'='*70}", flush=True)
     print(f"🚀 TELEGRAM RESEARCH PAPER ANALYSER RUNNING", flush=True)
@@ -443,6 +468,7 @@ async def main():
     )
     print(f"🔑 Gemini Key: {'✅ Set' if GEMINI_API_KEY else '❌ Missing'}", flush=True)
     print(f"🔗 Apps Script: {'✅ Set' if APPS_SCRIPT_URL else '❌ Missing'}", flush=True)
+    print(f"🏓 Keep-alive: Pinging self every 5 minutes", flush=True)
     print(f"{'='*70}\n", flush=True)
 
     # Check if running in headless environment without session string
@@ -473,3 +499,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n\n👋 Analyser stopped by user.")
+

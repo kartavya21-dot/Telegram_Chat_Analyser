@@ -168,6 +168,7 @@ Enter your phone number and the Telegram OTP code in your terminal. Copy the gen
    - `TELEGRAM_SESSION_STRING`: *(Paste the session string generated from Step 1)*
    - `GEMINI_API_KEY`: `your_gemini_api_key`
    - `APPS_SCRIPT_URL`: `https://script.google.com/macros/s/.../exec`
+   - `RENDER_EXTERNAL_URL`: `https://your-app-name.onrender.com` *(Your Render app's public URL — used for keep-alive pings)*
 5. Click **Deploy**.
 
-Render will now run your Telegram listener 24/7 without needing any terminal input!
+> **Note**: Render's free-tier Web Services spin down after ~15 minutes of no HTTP traffic. The app includes a built-in **self-ping keep-alive** that hits its own health check endpoint every 5 minutes to prevent this. Just make sure `RENDER_EXTERNAL_URL` is set to your app's public URL (e.g. `https://tg-research-analyser.onrender.com`).
